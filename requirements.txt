@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+python-multipart
+dnspython
+aiofiles
+celery[redis]
+redis
+pandas
+pydantic
+python-dotenv
