@@ -8,7 +8,9 @@ import os
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-celery = Celery(__name__, broker="redis://redis:6379/0")
+REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+celery = Celery(__name__, broker=REDIS_URL)
+
 
 @celery.task(bind=True)
 def validate_csv_task(self, file_path: str, job_id: str, detailed: bool = False):
