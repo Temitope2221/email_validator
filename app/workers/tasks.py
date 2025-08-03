@@ -1,4 +1,4 @@
-from celery import Celery
+=from celery import Celery
 import pandas as pd
 from app.core.validator import validate_email_simple, is_valid_email
 import logging
@@ -8,8 +8,13 @@ import os
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Redis broker
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 celery = Celery(__name__, broker=REDIS_URL)
+
+# Output directory
+OUTPUT_DIR = "./output"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 
 @celery.task(bind=True)
@@ -61,20 +66,20 @@ def validate_csv_task(self, file_path: str, job_id: str, detailed: bool = False)
             
             # Create detailed results DataFrame
             results_df = pd.DataFrame(validation_results)
-            output_file = f"/tmp/{job_id}_detailed_validated.csv"
+            output_file = os.path.join(OUTPUT_DIR, f"{job_id}_detailed_validated.csv")
             results_df.to_csv(output_file, index=False)
             
         else:
             # Simple validation (faster for large files)
             df['valid'] = df['email'].apply(lambda x: validate_email_simple(str(x)))
-            output_file = f"/tmp/{job_id}_validated.csv"
+            output_file = os.path.join(OUTPUT_DIR, f"{job_id}_validated.csv")
             df.to_csv(output_file, index=False)
         
         # Clean up input file
         try:
             os.remove(file_path)
-        except:
-            pass
+        except Exception as cleanup_err:
+            logger.warning(f"Could not delete input file: {cleanup_err}")
         
         logger.info(f"Validation completed for job {job_id}")
         
