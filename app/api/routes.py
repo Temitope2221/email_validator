@@ -40,64 +40,124 @@ async def upload_file(
             os.remove(file_location)
         raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
 
-@router.get("/status")
-async def get_status():
-    """
-    Get the status of all validation jobs
-    """
-    statuses = {}
-    for job_id in os.listdir("/tmp"):
-        if job_id.endswith("_validated.csv"):
-            statuses[job_id] = "completed"
-        else:
-            statuses[job_id] = "processing"
-    return statuses
+from fastapi import HTTPException
+import logging
 
-@router.get("/results/{job_id}")
-async def get_results(job_id: str):
-    """
-    Download validated CSV results from the output folder
-    """
-    simple_file = os.path.join(OUTPUT_DIR, f"{job_id}_validated.csv")
-    detailed_file = os.path.join(OUTPUT_DIR, f"{job_id}_detailed_validated.csv")
-
-    if os.path.exists(detailed_file):
-        return FileResponse(
-            path=detailed_file,
-            filename=os.path.basename(detailed_file),
-            media_type='text/csv'
-        )
-    elif os.path.exists(simple_file):
-        return FileResponse(
-            path=simple_file,
-            filename=os.path.basename(simple_file),
-            media_type='text/csv'
-        )
-    else:
-        raise HTTPException(status_code=404, detail="Results not found. Job may still be processing.")
+logger = logging.getLogger(__name__)
 
 @router.get("/status/{task_id}")
 async def get_task_status(task_id: str):
-    task = celery.AsyncResult(task_id)
+    """
+    Get the status of a validation task
+    """
+    try:
+        # Validate task_id format (basic UUID check)
+        if not task_id or len(task_id) < 10:
+            raise HTTPException(status_code=400, detail="Invalid task ID format")
+        
+        task = celery.AsyncResult(task_id)
+        
+        # Log the task state for debugging
+        logger.info(f"Task {task_id} state: {task.state}")
+        
+        if task.state == 'PENDING':
+            # Check if task actually exists or is truly pending
+            response = {
+                'task_id': task_id,
+                'state': task.state,
+                'status': 'Task is pending or does not exist',
+                'current': 0,
+                'total': 0
+            }
+        elif task.state == 'PROGRESS':
+            # Safely get info with defaults
+            info = task.info or {}
+            response = {
+                'task_id': task_id,
+                'state': task.state,
+                'status': info.get('status', 'In progress...'),
+                'current': info.get('current', 0),
+                'total': info.get('total', 0),
+                'progress': f"{info.get('current', 0)}/{info.get('total', 0)}",
+                'percentage': round((info.get('current', 0) / max(info.get('total', 1), 1)) * 100, 2)
+            }
+        elif task.state == 'SUCCESS':
+            response = {
+                'task_id': task_id,
+                'state': task.state,
+                'status': 'Task completed successfully',
+                'result': task.result,  # Use task.result instead of task.info for SUCCESS
+                'current': task.info.get('total', 0) if task.info else 0,
+                'total': task.info.get('total', 0) if task.info else 0
+            }
+        elif task.state == 'FAILURE':
+            response = {
+                'task_id': task_id,
+                'state': task.state,
+                'status': 'Task failed',
+                'error': str(task.info) if task.info else 'Unknown error',
+                'traceback': task.traceback if hasattr(task, 'traceback') else None
+            }
+        elif task.state == 'RETRY':
+            response = {
+                'task_id': task_id,
+                'state': task.state,
+                'status': 'Task is being retried',
+                'error': str(task.info) if task.info else 'Retrying...'
+            }
+        elif task.state == 'REVOKED':
+            response = {
+                'task_id': task_id,
+                'state': task.state,
+                'status': 'Task was cancelled'
+            }
+        else:
+            # Handle any other states
+            response = {
+                'task_id': task_id,
+                'state': task.state,
+                'status': str(task.info) if task.info else f'Unknown state: {task.state}',
+                'info': task.info
+            }
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"Error checking task status for {task_id}: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Error retrieving task status: {str(e)}"
+        )
 
-    if task.state == 'PENDING':
-        return {'state': task.state, 'status': 'Task is pending...'}
-    elif task.state == 'PROGRESS':
-        return {
-            'state': task.state,
-            'status': task.info.get('status', ''),
-            'current': task.info.get('current', 0),
-            'total': task.info.get('total', 0),
-            'progress': f"{task.info.get('current', 0)}/{task.info.get('total', 0)}"
-        }
-    elif task.state == 'SUCCESS':
-        return {
-            'state': task.state,
-            'status': 'Task completed successfully',
-            'result': task.info
-        }
-    else:
-        return {'state': task.state, 'status': str(task.info)}
+
+# Optional: Add a health check endpoint for Celery connection
+@router.get("/celery-health")
+async def celery_health():
+    """
+    Check if Celery is properly connected
+    """
+    try:
+        # Try to inspect active tasks
+        inspect = celery.control.inspect()
+        stats = inspect.stats()
+        
+        if stats:
+            return {
+                "status": "healthy",
+                "workers": len(stats),
+                "worker_nodes": list(stats.keys()) if stats else []
+            }
+        else:
+            return {
+                "status": "no_workers",
+                "message": "Celery is running but no workers are active"
+            }
+    except Exception as e:
+        logger.error(f"Celery health check failed: {str(e)}")
+        raise HTTPException(
+            status_code=503,
+            detail=f"Celery connection error: {str(e)}"
+        )
 
 @router.get("/health")
 async def health_check():
