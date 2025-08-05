@@ -6,8 +6,6 @@ import uuid
 import os
 from typing import Optional
 
-logger = logging.getLogger(__name__)
-
 router = APIRouter()
 
 UPLOAD_DIR = "/tmp"
@@ -41,6 +39,8 @@ async def upload_file(
         if os.path.exists(file_location):
             os.remove(file_location)
         raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
+
+logger = logging.getLogger(__name__)
 
 @router.get("/status/{task_id}")
 async def get_task_status(task_id: str):
