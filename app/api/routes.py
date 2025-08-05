@@ -40,6 +40,19 @@ async def upload_file(
             os.remove(file_location)
         raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
 
+@router.get("/status")
+async def get_status():
+    """
+    Get the status of all validation jobs
+    """
+    statuses = {}
+    for job_id in os.listdir("/tmp"):
+        if job_id.endswith("_validated.csv"):
+            statuses[job_id] = "completed"
+        else:
+            statuses[job_id] = "processing"
+    return statuses
+
 @router.get("/results/{job_id}")
 async def get_results(job_id: str):
     """
